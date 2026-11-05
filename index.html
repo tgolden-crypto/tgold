@@ -3975,6 +3975,7 @@
                 <option value="µg">µg - Microgramo</option>
                 <option value="mg">mg - Miligramo</option>
                 <option value="g" selected>g - Gramo</option>
+                <option value="ct">ct - Kilate (Esmeraldas)</option>
                 <option value="kg">kg - Kilogramo</option>
                 <option value="oz">oz - Onza</option>
               </select>
@@ -3997,12 +3998,12 @@
           <div id="new-prod-stock-grid" style="display:grid; grid-template-columns:1fr; gap:0.75rem; margin-bottom:0.75rem;">
             <div class="form-group" id="new-prod-piece-weight-group" style="display:none;">
               <label class="form-label" id="new-prod-piece-weight-label" style="display:flex; justify-content:space-between; align-items:center;">
-                <span>Peso del producto (g) *</span>
-                <span class="text-xs" style="color:var(--brand-primary); font-weight:700;">⚖️ Peso unitario</span>
+                <span id="new-prod-piece-weight-title">Peso del producto (g) *</span>
+                <span id="new-prod-piece-weight-sub" class="text-xs" style="color:var(--brand-primary); font-weight:700;">⚖️ Peso unitario</span>
               </label>
               <div style="position:relative; display:flex; align-items:center;">
                 <input type="text" inputmode="decimal" id="new-prod-piece-weight" class="form-input" placeholder="3.45" oninput="app.updateProductCostProfitPreview('new')" style="font-weight:700; font-size:1.05rem; padding-right:2.5rem; color:var(--text-main);">
-                <span style="position:absolute; right:12px; font-weight:800; color:#D97706; font-size:0.9rem; pointer-events:none;">g</span>
+                <span id="new-prod-piece-weight-unit" style="position:absolute; right:12px; font-weight:800; color:#D97706; font-size:0.9rem; pointer-events:none;">g</span>
               </div>
             </div>
 
@@ -4101,14 +4102,15 @@
       </div>
       <form id="add-category-form">
         <div class="modal-body">
-          <!-- SELECTOR DE TIPO: SERVICIOS GENERALES VS SERVICIOS EXTRAS -->
+          <!-- SELECTOR DE TIPO: SERVICIOS GENERALES VS ESMERALDAS VS SERVICIOS EXTRAS -->
           <div class="form-group" style="margin-bottom:1rem;">
             <label class="form-label" style="font-weight:700;">Tipo de Servicio / Categoría *</label>
             <select id="cat-type-select" class="form-select" onchange="app.onCategoryTypeChange()" style="font-weight:700; width:100%;">
               <option value="general" selected>💎 Servicios Generales (Joyería & Metales Preciosos)</option>
+              <option value="esmeraldas">🟢 Esmeraldas & Gemas (Peso en Kilates - ct)</option>
               <option value="extras">🧵 Servicios Extras (Manillas & Accesorios)</option>
             </select>
-            <small style="color:var(--text-subtle); font-size:0.75rem; margin-top:4px; display:block;">Selecciona si la categoría gestiona metales con gramaje o manillas/servicios extras por unidades.</small>
+            <small style="color:var(--text-subtle); font-size:0.75rem; margin-top:4px; display:block;">Selecciona si la categoría gestiona metales en gramos (g), esmeraldas en kilates (ct) o manillas por unidades (u.).</small>
           </div>
 
           <div class="form-group" style="margin-bottom:1rem;">
@@ -4133,6 +4135,31 @@
                 <span style="position:absolute; left:12px; top:50%; transform:translateY(-50%); font-size:1rem;">💰</span>
               </div>
               <small style="color:var(--text-subtle); font-size:0.75rem; margin-top:4px; display:block;">Costo base inicial. Al ingresar productos, se calculará automáticamente el costo promedio ponderado (∑ costos ÷ ∑ gramos).</small>
+            </div>
+          </div>
+
+          <!-- BLOQUE 1B: ESMERALDAS (PESO EN KILATES SIN AFECTAR GRAMAJE DE ORO) -->
+          <div id="cat-esmeraldas-fields" style="display:none;">
+            <div class="form-group" style="margin-bottom:1rem;">
+              <label class="form-label">Peso Disponible en Kilates (ct) *</label>
+              <div style="position:relative;">
+                <input type="text" inputmode="decimal" id="cat-carats-input" class="form-input" placeholder="0.00" value="0.00" style="padding-left:36px; padding-right:36px; font-weight:700;">
+                <span style="position:absolute; left:12px; top:50%; transform:translateY(-50%); font-size:1rem;">🟢</span>
+                <span style="position:absolute; right:12px; top:50%; transform:translateY(-50%); font-weight:800; color:#059669; font-size:0.85rem;">ct</span>
+              </div>
+              <small style="color:var(--text-subtle); font-size:0.75rem; margin-top:4px; display:block;">Peso inicial en Kilates (ct). Se gestiona en su categoría individual sin sumar gramos al oro.</small>
+            </div>
+            <div class="form-group" style="margin-bottom:1rem;">
+              <label class="form-label">Costo por Kilate Base ($ COP / ct) *</label>
+              <div style="position:relative;">
+                <input type="text" inputmode="numeric" id="cat-carat-cost-input" class="form-input" placeholder="0" value="0" style="padding-left:36px; font-weight:700;">
+                <span style="position:absolute; left:12px; top:50%; transform:translateY(-50%); font-size:1rem;">💵</span>
+              </div>
+              <small style="color:var(--text-subtle); font-size:0.75rem; margin-top:4px; display:block;">Costo de adquisición por Kilate ($/ct). Al asociar esmeraldas calcula el promedio ponderado por kilate.</small>
+            </div>
+            <div style="background:rgba(16, 185, 129, 0.08); border:1px solid rgba(16, 185, 129, 0.3); border-radius:var(--radius-md); padding:0.75rem 1rem; margin-bottom:1rem; font-size:0.78rem; color:var(--text-main); display:flex; align-items:flex-start; gap:8px;">
+              <span style="font-size:1.1rem; line-height:1;">🟢</span>
+              <span><strong>Categoría individual en Kilates (ct):</strong> Las esmeraldas muestran su peso en kilates (`ct`) y no afectan el gramaje total ni el costo promedio por gramo del inventario de oro.</span>
             </div>
           </div>
 
@@ -4194,6 +4221,14 @@
             <label class="form-label">Nombre de Categoría *</label>
             <input type="text" id="edit-cat-name-input" class="form-input" placeholder="ej. Oro 18K Italiano & Ley" required>
           </div>
+          <div class="form-group" style="margin-bottom:1rem;">
+            <label class="form-label" style="font-weight:700;">Tipo de Servicio / Categoría *</label>
+            <select id="edit-cat-type-select" class="form-select" onchange="app.onEditCategoryTypeChange()" style="font-weight:700; width:100%;">
+              <option value="general">💎 Servicios Generales (Joyería & Metales en Gramos - g)</option>
+              <option value="esmeraldas">🟢 Esmeraldas & Gemas (Peso en Kilates - ct)</option>
+              <option value="extras">🧵 Servicios Extras (Manillas & Accesorios por Unidad - u.)</option>
+            </select>
+          </div>
 
           <!-- EDIT GENERAL FIELDS -->
           <div id="edit-cat-general-fields">
@@ -4226,6 +4261,39 @@
                 </div>
               </div>
               <small style="color:var(--text-subtle); font-size:0.75rem; margin-top:4px; display:block;">Calculado automáticamente: sumatoria de valores de productos ingresados ÷ gramos totales de la categoría.</small>
+            </div>
+          </div>
+
+          <!-- EDIT ESMERALDAS FIELDS (KILATES / CT) -->
+          <div id="edit-cat-esmeraldas-fields" style="display:none;">
+            <div class="form-group" style="margin-bottom:1rem;">
+              <label class="form-label">Peso Disponible en Kilates (ct) *</label>
+              <div style="display:flex; align-items:center; gap:8px;">
+                <div style="position:relative; flex:1;">
+                  <input type="text" inputmode="decimal" id="edit-cat-carats-input" class="form-input" placeholder="0.00" style="padding-left:36px; padding-right:34px; font-weight:800; font-size:1.05rem; color:var(--text-main);" oninput="app.updateEditCategoryValuationPreview()">
+                  <span style="position:absolute; left:12px; top:50%; transform:translateY(-50%); font-size:1.1rem;">🟢</span>
+                  <span style="position:absolute; right:10px; top:50%; transform:translateY(-50%); font-weight:800; color:#059669; font-size:0.85rem;">ct</span>
+                </div>
+                <div style="display:flex; gap:4px;">
+                  <button type="button" class="btn btn-secondary" style="padding:6px 8px; font-weight:700; font-size:0.78rem;" onclick="app.adjustCategoryCaratsInput(-1)" title="Bajar 1 kilate">-1ct</button>
+                  <button type="button" class="btn btn-secondary" style="padding:6px 8px; font-weight:700; font-size:0.78rem;" onclick="app.adjustCategoryCaratsInput(1)" title="Subir 1 kilate">+1ct</button>
+                </div>
+              </div>
+              <small style="color:var(--text-subtle); font-size:0.75rem; margin-top:4px; display:block;">Total de kilates (ct) en esta categoría de esmeraldas (sin afectar los gramos de oro).</small>
+            </div>
+            <div class="form-group" style="margin-bottom:1rem;">
+              <label class="form-label">Costo Promedio por Kilate ($ COP / ct) *</label>
+              <div style="display:flex; align-items:center; gap:8px;">
+                <div style="position:relative; flex:1;">
+                  <input type="text" inputmode="numeric" id="edit-cat-carat-cost-input" class="form-input" placeholder="0" style="padding-left:36px; font-weight:800; font-size:1.05rem; color:var(--text-main);" oninput="app.updateEditCategoryValuationPreview()">
+                  <span style="position:absolute; left:12px; top:50%; transform:translateY(-50%); font-size:1.1rem;">💵</span>
+                </div>
+                <div style="display:flex; gap:4px;">
+                  <button type="button" class="btn btn-secondary" style="padding:6px 8px; font-weight:700; font-size:0.75rem;" onclick="app.adjustCategoryCaratCostInput(-100000)" title="Bajar $100.000">-$100k</button>
+                  <button type="button" class="btn btn-secondary" style="padding:6px 8px; font-weight:700; font-size:0.75rem;" onclick="app.adjustCategoryCaratCostInput(100000)" title="Subir $100.000">+$100k</button>
+                </div>
+              </div>
+              <small style="color:var(--text-subtle); font-size:0.75rem; margin-top:4px; display:block;">Costo promedio ponderado por kilate ($/ct).</small>
             </div>
           </div>
 
@@ -4486,6 +4554,7 @@
                 <option value="µg">µg - Microgramo</option>
                 <option value="mg">mg - Miligramo</option>
                 <option value="g">g - Gramo</option>
+                <option value="ct">ct - Kilate (Esmeraldas)</option>
                 <option value="kg">kg - Kilogramo</option>
                 <option value="oz">oz - Onza</option>
               </select>
@@ -4508,12 +4577,12 @@
           <div id="edit-prod-stock-grid" style="display:grid; grid-template-columns:1fr; gap:0.75rem; margin-bottom:0.75rem;">
             <div class="form-group" id="edit-prod-piece-weight-group" style="display:none;">
               <label class="form-label" id="edit-prod-piece-weight-label" style="display:flex; justify-content:space-between; align-items:center;">
-                <span>Peso del producto (g) *</span>
-                <span class="text-xs" style="color:var(--brand-primary); font-weight:700;">⚖️ Peso unitario</span>
+                <span id="edit-prod-piece-weight-title">Peso del producto (g) *</span>
+                <span id="edit-prod-piece-weight-sub" class="text-xs" style="color:var(--brand-primary); font-weight:700;">⚖️ Peso unitario</span>
               </label>
               <div style="position:relative; display:flex; align-items:center;">
                 <input type="text" inputmode="decimal" id="edit-prod-piece-weight" class="form-input" placeholder="3.45" oninput="app.updateProductCostProfitPreview('edit')" style="font-weight:700; font-size:1.05rem; padding-right:2.5rem; color:var(--text-main);">
-                <span style="position:absolute; right:12px; font-weight:800; color:#D97706; font-size:0.9rem; pointer-events:none;">g</span>
+                <span id="edit-prod-piece-weight-unit" style="position:absolute; right:12px; font-weight:800; color:#D97706; font-size:0.9rem; pointer-events:none;">g</span>
               </div>
             </div>
 

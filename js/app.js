@@ -540,6 +540,15 @@ class NexusApp {
     }
     if (this.data.categories && Array.isArray(this.data.categories)) {
       this.data.categories.forEach(cat => {
+        if (this.isEmeraldCategory(cat)) {
+          cat.type = 'esmeraldas';
+          cat.isEmerald = true;
+          cat.weightUnit = 'ct';
+          if ((cat.availableCarats === undefined || cat.availableCarats === null || Number(cat.availableCarats) === 0) && Number(cat.availableGrams) > 0) {
+            cat.availableCarats = parseFloat(String(cat.availableGrams).replace(',', '.')) || 0;
+          }
+          cat.availableGrams = 0;
+        }
         if (cat.cost === undefined || cat.cost === null) {
           const initCat = INITIAL_DATA.categories.find(ic => ic.id === cat.id);
           cat.cost = initCat && initCat.cost !== undefined ? initCat.cost : 0;
@@ -555,6 +564,13 @@ class NexusApp {
         if (!p.measureType) p.measureType = 'Pesaje';
         if (!p.supplier) p.supplier = 'Proveedor General';
         if (!p.sku) p.sku = '001';
+        if (this.isEmeraldProduct(p)) {
+          p.isEmerald = true;
+          if ((p.measureType || 'Pesaje') === 'Pesaje') {
+            p.weightUnit = 'ct';
+            p.unit = 'ct';
+          }
+        }
       });
       // NOTE: Empty array is valid for clean production data
     } else {
@@ -752,19 +768,68 @@ class NexusApp {
     if (typeof this.initCharts === 'function' && this.currentSubView === 'inicio') this.initCharts();
   }
 
+  isEmeraldCategory(cat) {
+    if (!cat) return false;
+    if (cat.type === 'general' || cat.type === 'extras') {
+      // Si ya tiene tipo general pero su id/nombre es explícitamente esmeraldas y no fue forzado a otro
+      const cId = String(cat.id || '').toLowerCase().trim();
+      const cName = String(cat.name || '').toLowerCase().trim();
+      if (cat.type === 'esmeraldas' || cat.isEmerald) return true;
+      if (cat.type !== 'extras' && (cId === 'esmeraldas' || cName === 'esmeraldas' || cName.includes('esmeralda'))) return true;
+      return false;
+    }
+    const cId = String(cat.id || '').toLowerCase().trim();
+    const cName = String(cat.name || '').toLowerCase().trim();
+    return cat.type === 'esmeraldas' || Boolean(cat.isEmerald) || cId === 'esmeraldas' || cName === 'esmeraldas' || cName.includes('esmeralda');
+  }
+
+  getCategoryForProduct(p) {
+    if (!p || !this.data || !Array.isArray(this.data.categories)) return null;
+    const pCat = String(p.category || '').toLowerCase().trim();
+    const pCatName = String(p.categoryName || '').toLowerCase().trim();
+    return this.data.categories.find(c => {
+      const cId = String(c.id || '').toLowerCase().trim();
+      const cName = String(c.name || '').toLowerCase().trim();
+      return pCat === cId || pCat === cName || pCatName === cName || pCatName === cId;
+    }) || null;
+  }
+
+  isEmeraldProduct(p) {
+    if (!p) return false;
+    if (p.isEmerald) return true;
+    const cat = this.getCategoryForProduct(p);
+    if (cat && this.isEmeraldCategory(cat)) return true;
+    const pCat = String(p.category || '').toLowerCase().trim();
+    const pCatName = String(p.categoryName || '').toLowerCase().trim();
+    return pCat === 'esmeraldas' || pCatName === 'esmeraldas' || pCatName.includes('esmeralda') || String(p.weightUnit || '').toLowerCase() === 'ct';
+  }
+
+  isExtraProduct(p) {
+    if (!p) return false;
+    if (p.isExtra) return true;
+    const cat = this.getCategoryForProduct(p);
+    return Boolean(cat && (cat.type === 'extras' || cat.isExtra));
+  }
+
+  isIsolatedInventoryProduct(p) {
+    return this.isExtraProduct(p) || this.isEmeraldProduct(p);
+  }
+
+  getCaratsFromProduct(p) {
+    if (!p || !this.isEmeraldProduct(p)) return 0;
+    const stock = parseFloat(String(p.stock || 0).replace(',', '.')) || 0;
+    if (stock <= 0) return 0;
+    const isPesaje = (p.measureType || 'Pesaje') === 'Pesaje';
+    if (!isPesaje) {
+      const pieceWeight = parseFloat(String(p.pieceWeight !== undefined && p.pieceWeight !== null ? p.pieceWeight : (p.weight || 0)).replace(',', '.')) || 0;
+      return pieceWeight > 0 ? Math.round(stock * pieceWeight * 100) / 100 : 0;
+    }
+    return Math.round(stock * 100) / 100;
+  }
+
   getGramsFromProduct(p) {
     if (!p) return 0;
-    if (p.isExtra) return 0;
-    if (this.data && Array.isArray(this.data.categories)) {
-      const cat = this.data.categories.find(c => {
-        const cId = String(c.id || '').toLowerCase().trim();
-        const cName = String(c.name || '').toLowerCase().trim();
-        const pCat = String(p.category || '').toLowerCase().trim();
-        const pCatName = String(p.categoryName || '').toLowerCase().trim();
-        return pCat === cId || pCat === cName || pCatName === cName || pCatName === cId;
-      });
-      if (cat && (cat.type === 'extras' || cat.isExtra)) return 0;
-    }
+    if (this.isIsolatedInventoryProduct(p)) return 0;
     const stock = parseFloat(String(p.stock || 0).replace(',', '.')) || 0;
     if (stock <= 0) return 0;
     const isPesaje = (p.measureType || 'Pesaje') === 'Pesaje';
@@ -773,6 +838,7 @@ class NexusApp {
       return pieceWeight > 0 ? (stock * pieceWeight) : 0;
     }
     const unit = (p.weightUnit || p.unit || 'g').toLowerCase();
+    if (unit === 'ct') return 0;
     if (unit === 'kg') return stock * 1000;
     if (unit === 'mg') return stock / 1000;
     if (unit === 'µg' || unit === 'ug') return stock / 1000000;
@@ -786,6 +852,10 @@ class NexusApp {
     const grams = this.getGramsFromProduct(p);
     if (grams > 0) {
       return Math.round(grams * cost * 100) / 100;
+    }
+    const carats = this.getCaratsFromProduct(p);
+    if (carats > 0) {
+      return Math.round(carats * cost * 100) / 100;
     }
     const stock = parseFloat(String(p.stock || 0).replace(',', '.')) || 0;
     return Math.round(stock * cost * 100) / 100;
@@ -805,6 +875,7 @@ class NexusApp {
       cat.itemsCount = prodsInCat.length;
 
       const isExtras = cat.type === 'extras' || cat.isExtra;
+      const isEmerald = !isExtras && this.isEmeraldCategory(cat);
       const isUnidades = isExtras || cat.id === 'relojes' || cat.id === 'accesorios' || cat.measureType === 'Unidades';
 
       const totalCost = prodsInCat.reduce((sum, p) => sum + (this.getProductTotalCost(p) || 0), 0);
@@ -817,6 +888,21 @@ class NexusApp {
           cat.cost = Math.round((totalCost / totalUnits) * 100) / 100;
         }
         cat.totalValuation = Math.round((totalCost > 0 ? totalCost : ((cat.availableUnits || 0) * (cat.cost || 0))) * 100) / 100;
+      } else if (isEmerald) {
+        cat.type = 'esmeraldas';
+        cat.isEmerald = true;
+        cat.weightUnit = 'ct';
+        cat.availableGrams = 0; // CRITICAL: zero grams for emeralds so gold inventory is unaffected
+        const totalCarats = prodsInCat.reduce((sum, p) => sum + (this.getCaratsFromProduct(p) || 0), 0);
+        const totalUnits = prodsInCat.reduce((sum, p) => sum + (parseFloat(String(p.stock || 0).replace(',', '.')) || 0), 0);
+        cat.availableCarats = prodsInCat.length > 0 ? Math.round(totalCarats * 100) / 100 : Math.round((Number(cat.availableCarats) || 0) * 100) / 100;
+        cat.availableUnits = totalUnits;
+        if (cat.availableCarats > 0 && totalCost > 0) {
+          cat.cost = Math.round((totalCost / cat.availableCarats) * 100) / 100;
+        } else if (totalUnits > 0 && totalCost > 0) {
+          cat.cost = Math.round((totalCost / totalUnits) * 100) / 100;
+        }
+        cat.totalValuation = Math.round((totalCost > 0 ? totalCost : ((cat.availableCarats || 0) * (cat.cost || 0))) * 100) / 100;
       } else {
         const totalGrams = prodsInCat.reduce((sum, p) => sum + (this.getGramsFromProduct(p) || 0), 0);
         cat.availableGrams = Math.round(totalGrams * 100) / 100;
@@ -1013,7 +1099,10 @@ class NexusApp {
       if (!this.data.kpis) this.data.kpis = {};
       // Requerimiento: Costo General e Inventario solo varían con compras o ingresos, NO bajan al vender
       if (!this.data.kpis.inventoryValue || this.data.kpis.inventoryValue <= 0) {
-        const totalCostValue = this.data.products.reduce((acc, p) => acc + this.getProductTotalCost(p), 0);
+        const totalCostValue = this.data.products.reduce((acc, p) => {
+          if (this.isIsolatedInventoryProduct(p)) return acc;
+          return acc + this.getProductTotalCost(p);
+        }, 0);
         this.data.kpis.inventoryValue = totalCostValue > 0 ? Math.round(totalCostValue * 100) / 100 : 0;
       }
       if (!this.data.kpis.avgCostPerGram || this.data.kpis.avgCostPerGram <= 0) {
@@ -2967,6 +3056,7 @@ class NexusApp {
         }
         const catType = document.getElementById('cat-type-select')?.value || 'general';
         const isExtras = catType === 'extras';
+        const isEmerald = catType === 'esmeraldas';
         const name = document.getElementById('cat-name-input').value.trim();
         const color = document.getElementById('cat-color-input').value;
         const id = name.toLowerCase().replace(/[^a-z0-9]/g, '') || `cat_${Date.now()}`;
@@ -2990,6 +3080,25 @@ class NexusApp {
             availableGrams: 0, // CRITICAL: zero grams for extras/manillas
             cost: Math.max(0, Math.round(unitCost * 100) / 100),
             totalValuation: Math.max(0, Math.round(availableUnits * unitCost * 100) / 100)
+          };
+        } else if (isEmerald) {
+          const caratsInput = document.getElementById('cat-carats-input');
+          const availableCarats = this.parseCleanNumber(caratsInput?.value) || 0;
+          const caratCostInput = document.getElementById('cat-carat-cost-input');
+          const caratCost = this.parseCleanNumber(caratCostInput?.value) || 0;
+
+          newCat = {
+            id,
+            name,
+            type: 'esmeraldas',
+            isEmerald: true,
+            weightUnit: 'ct',
+            itemsCount: 0,
+            color,
+            availableCarats: Math.max(0, Math.round(availableCarats * 100) / 100),
+            availableGrams: 0, // CRITICAL: zero grams so gold inventory is unaffected
+            cost: Math.max(0, Math.round(caratCost * 100) / 100),
+            totalValuation: Math.max(0, Math.round(availableCarats * caratCost * 100) / 100)
           };
         } else {
           const gramsInput = document.getElementById('cat-grams-input');
@@ -3015,6 +3124,8 @@ class NexusApp {
         this.closeModal('category-modal');
         if (isExtras) {
           this.showToast(`Categoría de Manillas "${name}" creada con ${newCat.availableUnits} u. y costo base ${this.formatCurrency(newCat.cost)} (Sin afectación de gramaje)`, 'success');
+        } else if (isEmerald) {
+          this.showToast(`Categoría de Esmeraldas "${name}" creada con ${newCat.availableCarats} ct (Kilates) y costo ${this.formatCurrency(newCat.cost)}/ct (Sin afectar inventario de oro)`, 'success');
         } else {
           this.showToast(`Categoría "${name}" creada con ${newCat.availableGrams} g y costo base ${this.formatCurrency(newCat.cost)}`, 'success');
         }
@@ -3033,11 +3144,19 @@ class NexusApp {
         const id = document.getElementById('edit-cat-id').value;
         const newName = document.getElementById('edit-cat-name-input').value.trim();
         const newColor = document.getElementById('edit-cat-color-input').value;
+        const selectedType = document.getElementById('edit-cat-type-select')?.value;
 
         const cat = (this.data.categories || []).find(c => c.id === id);
         if (cat) {
           const oldName = cat.name;
+          if (selectedType) {
+            cat.type = selectedType;
+            cat.isExtra = selectedType === 'extras';
+            cat.isEmerald = selectedType === 'esmeraldas';
+            if (selectedType === 'esmeraldas') cat.weightUnit = 'ct';
+          }
           const isExtras = cat.type === 'extras' || cat.isExtra;
+          const isEmerald = !isExtras && (cat.type === 'esmeraldas' || cat.isEmerald || this.isEmeraldCategory(cat));
           cat.name = newName;
           cat.color = newColor;
 
@@ -3051,6 +3170,19 @@ class NexusApp {
             cat.availableGrams = 0; // CRITICAL: 0 grams for extras
             cat.cost = Math.max(0, Math.round(newUnitCost * 100) / 100);
             cat.totalValuation = Math.max(0, Math.round(cat.availableUnits * cat.cost * 100) / 100);
+          } else if (isEmerald) {
+            const caratsInput = document.getElementById('edit-cat-carats-input');
+            const newCarats = this.parseCleanNumber(caratsInput?.value) || 0;
+            const caratCostInput = document.getElementById('edit-cat-carat-cost-input');
+            const newCaratCost = this.parseCleanNumber(caratCostInput?.value) || 0;
+
+            cat.type = 'esmeraldas';
+            cat.isEmerald = true;
+            cat.weightUnit = 'ct';
+            cat.availableCarats = Math.max(0, Math.round(newCarats * 100) / 100);
+            cat.availableGrams = 0; // CRITICAL: 0 grams for emeralds
+            cat.cost = Math.max(0, Math.round(newCaratCost * 100) / 100);
+            cat.totalValuation = Math.max(0, Math.round(cat.availableCarats * cat.cost * 100) / 100);
           } else {
             const gramsInput = document.getElementById('edit-cat-grams-input');
             const newGrams = this.parseCleanNumber(gramsInput?.value);
@@ -3061,11 +3193,17 @@ class NexusApp {
             cat.cost = Math.max(0, Math.round(newCost * 100) / 100);
           }
 
-          // Cascade name update to all products in inventory
+          // Cascade name & type update to all products in inventory
           (this.data.products || []).forEach(p => {
             if (p.category === cat.id || p.categoryName === oldName) {
               p.category = cat.id;
               p.categoryName = newName;
+              p.isExtra = Boolean(isExtras);
+              p.isEmerald = Boolean(isEmerald);
+              if (isEmerald && (p.measureType || 'Pesaje') === 'Pesaje') {
+                p.weightUnit = 'ct';
+                p.unit = 'ct';
+              }
             }
           });
 
@@ -3074,6 +3212,8 @@ class NexusApp {
           this.closeModal('edit-category-modal');
           if (isExtras) {
             this.showToast(`Categoría "${newName}" actualizada (${cat.availableUnits} u., ${this.formatCurrency(cat.cost)}/u.)`, 'success');
+          } else if (isEmerald) {
+            this.showToast(`Categoría de Esmeraldas "${newName}" actualizada (${cat.availableCarats} ct, ${this.formatCurrency(cat.cost)}/ct)`, 'success');
           } else {
             this.showToast(`Categoría "${newName}" actualizada (${cat.availableGrams} g, ${this.formatCurrency(cat.cost)}) y sincronizada en toda la aplicación`, 'success');
           }
@@ -3171,6 +3311,7 @@ class NexusApp {
             (this.data.categories || []).find(c => c.id === 'oro18k') || 
             { id: 'oro18k', name: 'Oro 18K Italiano & Ley' };
           const isExtras = catObj.type === 'extras' || catObj.isExtra;
+          const isEmerald = !isExtras && this.isEmeraldCategory(catObj);
 
           // Prioridad 1: Coincidencia por Código (SKU) exacto (identificador único del inventario)
           let targetProd = null;
@@ -3191,16 +3332,18 @@ class NexusApp {
           if (!targetProd) {
             const newProdId = this.generateUniqueId('PRD-CJ', this.data.products);
             const newSku = prodSku || this.generateUniqueId('SKU', this.data.products);
+            const defaultUnit = isPesaje ? (isEmerald ? 'ct' : 'g') : 'u.';
             targetProd = {
               id: newProdId,
               sku: newSku,
               name: prodName,
               measureType: measureType,
-              weightUnit: isPesaje ? 'g' : 'u.',
-              unit: isPesaje ? 'g' : 'u.',
+              weightUnit: defaultUnit,
+              unit: defaultUnit,
               category: catObj.id,
               categoryName: catObj.name,
               isExtra: isExtras,
+              isEmerald: isEmerald,
               supplier: supp,
               cost: unitCost,
               price: 0,
@@ -3219,6 +3362,13 @@ class NexusApp {
             targetProd.category = catObj.id;
             targetProd.categoryName = catObj.name;
             if (isExtras) targetProd.isExtra = true;
+            if (isEmerald) {
+              targetProd.isEmerald = true;
+              if (isPesaje) {
+                targetProd.weightUnit = 'ct';
+                targetProd.unit = 'ct';
+              }
+            }
             if (supp && supp !== 'Proveedor General') {
               targetProd.supplier = supp;
             } else if (!targetProd.supplier) {
@@ -3237,17 +3387,22 @@ class NexusApp {
             targetProd.status = targetProd.stock > minStock ? 'active' : (targetProd.stock > 0 ? 'low_stock' : 'out_of_stock');
           }
 
-          // Si la categoría es de extras/manillas, no suma gramos de metal a la categoría ni a inventario
-          const totalGramsAdded = isExtras 
+          // Si la categoría es de extras/manillas o esmeraldas, no suma gramos de oro al inventario general
+          const totalCaratsAdded = isEmerald
+            ? (isPesaje ? quantity : (productGrams > 0 ? Math.round(quantity * productGrams * 100) / 100 : 0))
+            : 0;
+          const totalGramsAdded = (isExtras || isEmerald)
             ? 0 
             : (isPesaje ? quantity : (productGrams > 0 ? Math.round(quantity * productGrams * 100) / 100 : 0));
-          // En joyería fina, si el lote tiene gramaje, el costo unitario ingresado corresponde al gramo ($/g)
-          const totalCost = totalGramsAdded > 0 ? Math.round(totalGramsAdded * unitCost) : Math.round(quantity * unitCost);
+          // En joyería fina o esmeraldas, si el lote tiene gramaje/kilates, el costo unitario ingresado corresponde al gramo ($/g) o kilate ($/ct)
+          const totalCost = totalGramsAdded > 0
+            ? Math.round(totalGramsAdded * unitCost)
+            : (totalCaratsAdded > 0 ? Math.round(totalCaratsAdded * unitCost) : Math.round(quantity * unitCost));
 
           // 2. Sincronizar disponibilidad de gramos y valuación de categorías & KPIs
           if (!this.data.kpis) this.data.kpis = {};
-          this.data.kpis.inventoryValue = Math.round(this.data.products.reduce((acc, p) => acc + (this.getProductTotalCost(p) || 0), 0) * 100) / 100;
-          if (totalGramsAdded > 0 && !isExtras) {
+          this.data.kpis.inventoryValue = Math.round(this.data.products.filter(p => !this.isIsolatedInventoryProduct(p)).reduce((acc, p) => acc + (this.getProductTotalCost(p) || 0), 0) * 100) / 100;
+          if (totalGramsAdded > 0 && !isExtras && !isEmerald) {
             const currentGrams = this.data.kpis.avgCostGrams || 0;
             const currentAvgCost = this.data.kpis.avgCostPerGram || 0;
             const newTotalCost = (currentGrams * currentAvgCost) + totalCost;
@@ -3428,10 +3583,13 @@ class NexusApp {
 
         const catId = document.getElementById('new-prod-cat').value;
         const catObj = (this.data.categories || []).find(c => c.id === catId || c.name === catId);
-        const isExtraCat = catObj && (catObj.type === 'extras' || catObj.isExtra);
+        const isExtraCat = Boolean(catObj && (catObj.type === 'extras' || catObj.isExtra));
+        const isEmeraldCat = !isExtraCat && Boolean(catObj && this.isEmeraldCategory(catObj));
 
         if (measureType === 'Unidades' && !isExtraCat && pieceWeight <= 0) {
-          this.showToast('Por favor ingresa el peso del producto (g) para calcular el gramaje del lote y sincronizar la categoría.', 'warning');
+          this.showToast(isEmeraldCat
+            ? 'Por favor ingresa el peso en kilates (ct) para calcular los kilates del lote y sincronizar la categoría de esmeraldas.'
+            : 'Por favor ingresa el peso del producto (g) para calcular el gramaje del lote y sincronizar la categoría.', 'warning');
           document.getElementById('new-prod-piece-weight')?.focus();
           return;
         }
@@ -3443,14 +3601,15 @@ class NexusApp {
         const active = document.getElementById('new-prod-active')?.checked !== false;
 
         const categoryName = catObj ? catObj.name : 'General';
+        const effectiveWeightUnit = isExtraCat ? 'u.' : (measureType === 'Pesaje' ? (isEmeraldCat ? 'ct' : weightUnit) : 'u.');
 
         const newP = {
           id: this.generateUniqueId('PRD', this.data.products),
           sku: sku || '001',
           name,
           measureType: isExtraCat ? 'Unidades' : measureType,
-          weightUnit: isExtraCat ? 'u.' : weightUnit,
-          unit: isExtraCat ? 'u.' : weightUnit,
+          weightUnit: effectiveWeightUnit,
+          unit: effectiveWeightUnit,
           pieceWeight: isExtraCat ? 0 : pieceWeight,
           weight: isExtraCat ? 0 : pieceWeight,
           category: catId,
@@ -3459,7 +3618,8 @@ class NexusApp {
           cost,
           price,
           stock,
-          isExtra: isExtraCat ? true : false,
+          isExtra: isExtraCat,
+          isEmerald: isEmeraldCat,
           minStock: measureType === 'Pesaje' ? (weightUnit === 'kg' ? 0.001 : (weightUnit === 'mg' ? 500 : 0.5)) : 2,
           status: !active ? 'inactive' : (stock > 0 ? 'active' : 'out_of_stock')
         };
@@ -3468,10 +3628,10 @@ class NexusApp {
         const addedCost = this.getProductTotalCost(newP);
         const addedGrams = this.getGramsFromProduct(newP);
         if (!this.data.kpis) this.data.kpis = {};
-        if (addedCost > 0) {
+        if (addedCost > 0 && !this.isIsolatedInventoryProduct(newP)) {
           this.data.kpis.inventoryValue = Math.round(((this.data.kpis.inventoryValue || 0) + addedCost) * 100) / 100;
         }
-        if (addedGrams > 0) {
+        if (addedGrams > 0 && !this.isIsolatedInventoryProduct(newP)) {
           const currentGrams = this.data.kpis.avgCostGrams || 0;
           const currentAvgCost = this.data.kpis.avgCostPerGram || 0;
           const newTotalCost = (currentGrams * currentAvgCost) + addedCost;
@@ -3484,7 +3644,7 @@ class NexusApp {
         this.syncAllModules();
         addProdForm.reset();
         this.closeModal('product-modal');
-        const unitLabel = isExtraCat ? 'u.' : (measureType === 'Pesaje' ? weightUnit : 'u.');
+        const unitLabel = isExtraCat ? 'u.' : (measureType === 'Pesaje' ? effectiveWeightUnit : (isEmeraldCat && pieceWeight > 0 ? `u. · ${pieceWeight} ct` : 'u.'));
         this.showToast(`Producto "${name}" (${stock} ${unitLabel}) registrado en ${categoryName}`, 'success');
       });
     }
@@ -3501,11 +3661,9 @@ class NexusApp {
         const id = document.getElementById('edit-prod-id').value;
         const p = this.data.products.find(prod => String(prod.id) === String(id));
         if (p) {
-          const oldProdCost = this.getProductTotalCost(p);
+          const wasIsolated = this.isIsolatedInventoryProduct(p);
+          const oldProdCost = wasIsolated ? 0 : this.getProductTotalCost(p);
           const oldProdGrams = this.getGramsFromProduct(p);
-          const oldGrams = oldProdGrams;
-          const oldCatId = p.category;
-          const oldCatName = p.categoryName;
 
           p.sku = document.getElementById('edit-prod-sku').value.trim();
           p.name = document.getElementById('edit-prod-name').value.trim();
@@ -3518,23 +3676,30 @@ class NexusApp {
 
           const editCatId = document.getElementById('edit-prod-cat').value;
           const catObj = (this.data.categories || []).find(c => c.id === editCatId || c.name === editCatId);
-          const isExtraCat = catObj && (catObj.type === 'extras' || catObj.isExtra);
+          const isExtraCat = Boolean(catObj && (catObj.type === 'extras' || catObj.isExtra));
+          const isEmeraldCat = !isExtraCat && Boolean(catObj && this.isEmeraldCategory(catObj));
 
           if (p.measureType === 'Unidades' && !isExtraCat && pieceWeight <= 0) {
-            this.showToast('Por favor ingresa el peso del producto (g) para calcular el gramaje del lote y sincronizar la categoría.', 'warning');
+            this.showToast(isEmeraldCat
+              ? 'Por favor ingresa el peso en kilates (ct) para calcular los kilates del lote y sincronizar la categoría de esmeraldas.'
+              : 'Por favor ingresa el peso del producto (g) para calcular el gramaje del lote y sincronizar la categoría.', 'warning');
             document.getElementById('edit-prod-piece-weight')?.focus();
             return;
           }
 
           p.pieceWeight = isExtraCat ? 0 : pieceWeight;
           p.weight = isExtraCat ? 0 : pieceWeight;
-          p.isExtra = isExtraCat ? true : false;
+          p.isExtra = isExtraCat;
+          p.isEmerald = isEmeraldCat;
           p.category = editCatId;
           p.categoryName = catObj ? catObj.name : 'General';
           if (isExtraCat) {
             p.measureType = 'Unidades';
             p.weightUnit = 'u.';
             p.unit = 'u.';
+          } else if (isEmeraldCat && p.measureType === 'Pesaje') {
+            p.weightUnit = 'ct';
+            p.unit = 'ct';
           }
           p.supplier = document.getElementById('edit-prod-supplier').value;
           p.cost = this.parseCleanNumber(document.getElementById('edit-prod-cost')?.value);
@@ -3557,7 +3722,8 @@ class NexusApp {
           }
 
           // Sincronizar KPIs de costo general y adquisición si cambió stock o costo manual
-          const newProdCost = this.getProductTotalCost(p);
+          const isNowIsolated = this.isIsolatedInventoryProduct(p);
+          const newProdCost = isNowIsolated ? 0 : this.getProductTotalCost(p);
           const newProdGrams = this.getGramsFromProduct(p);
           const diffCost = newProdCost - oldProdCost;
           const diffGrams = newProdGrams - oldProdGrams;
@@ -3636,8 +3802,10 @@ class NexusApp {
     if (dl && this.data.products) {
       dl.innerHTML = this.data.products.map(p => {
         const isPesaje = (p.measureType || 'Pesaje') === 'Pesaje';
-        const unit = isPesaje ? (p.weightUnit || 'g') : 'u.';
-        const weightInfo = !isPesaje && (p.pieceWeight || p.weight) ? ` · ${p.pieceWeight || p.weight}g` : '';
+        const isEm = this.isEmeraldProduct(p);
+        const wUnit = isEm ? 'ct' : (p.weightUnit || 'g');
+        const unit = isPesaje ? wUnit : 'u.';
+        const weightInfo = !isPesaje && (p.pieceWeight || p.weight) ? ` · ${p.pieceWeight || p.weight}${wUnit}` : '';
         return `<option value="${this.escapeHtml(p.name)}">${this.escapeHtml(p.name)} (Código: ${this.escapeHtml(p.sku || p.id)} · Stock: ${p.stock} ${unit}${weightInfo})</option>`;
       }).join('');
     }
@@ -3675,9 +3843,9 @@ class NexusApp {
       const measureSelect = document.getElementById('po-measure-type');
       if (measureSelect) {
         measureSelect.value = 'Unidades';
-        this.onPurchaseMeasureTypeChange();
       }
     }
+    this.onPurchaseMeasureTypeChange();
     const catInfo = document.getElementById('po-preview-cat-info');
     if (catInfo && catObj) {
       catInfo.textContent = `Categoría: ${catObj.name}`;
@@ -3700,20 +3868,28 @@ class NexusApp {
   onPurchaseMeasureTypeChange() {
     const measureSelect = document.getElementById('po-measure-type');
     const isPesaje = (measureSelect?.value || 'Pesaje') === 'Pesaje';
+    const catSelect = document.getElementById('po-category-select');
+    const catObj = catSelect ? (this.data.categories || []).find(c => c.id === catSelect.value) : null;
+    const isEm = this.isEmeraldCategory(catObj);
+    const wUnit = isEm ? 'ct' : 'g';
+    const wName = isEm ? 'kilate (ct)' : 'gramo';
+    const wPlural = isEm ? 'kilates (ct)' : 'gramos';
 
     const qtyLabel = document.getElementById('po-quantity-label');
     const qtyUnit = document.getElementById('po-quantity-unit');
     const costLabel = document.getElementById('po-unit-cost-label');
     const gramsGroup = document.getElementById('po-grams-group');
     const gramsInput = document.getElementById('po-product-grams');
+    const gramsLabel = gramsGroup ? gramsGroup.querySelector('label') : null;
+    const gramsBadge = gramsGroup ? gramsGroup.querySelector('span') : null;
 
     if (isPesaje) {
-      if (qtyLabel) qtyLabel.textContent = 'Cantidad en gramos *';
+      if (qtyLabel) qtyLabel.textContent = `Cantidad en ${wPlural} *`;
       if (qtyUnit) {
-        qtyUnit.textContent = 'g';
-        qtyUnit.style.color = '#D97706';
+        qtyUnit.textContent = wUnit;
+        qtyUnit.style.color = isEm ? '#059669' : '#D97706';
       }
-      if (costLabel) costLabel.textContent = 'Costo por gramo ($) *';
+      if (costLabel) costLabel.textContent = `Costo por ${wName} ($) *`;
       if (gramsGroup) gramsGroup.style.display = 'none';
       if (gramsInput) {
         gramsInput.required = false;
@@ -3725,8 +3901,13 @@ class NexusApp {
         qtyUnit.textContent = 'u.';
         qtyUnit.style.color = '#4F46E5';
       }
-      if (costLabel) costLabel.textContent = 'Costo unitario ($) *';
+      if (costLabel) costLabel.textContent = isEm ? 'Costo por kilate ($ / ct) *' : 'Costo unitario ($) *';
       if (gramsGroup) gramsGroup.style.display = 'block';
+      if (gramsLabel) gramsLabel.textContent = isEm ? 'Peso por unidad en Kilates (ct)' : 'Peso por unidad en Gramos (g)';
+      if (gramsBadge) {
+        gramsBadge.textContent = wUnit;
+        gramsBadge.style.color = isEm ? '#059669' : '#D97706';
+      }
       if (gramsInput) gramsInput.required = false;
     }
 
@@ -3846,6 +4027,10 @@ class NexusApp {
   updatePurchaseCalculations() {
     const measureSelect = document.getElementById('po-measure-type');
     const isPesaje = (measureSelect?.value || 'Pesaje') === 'Pesaje';
+    const catSelect = document.getElementById('po-category-select');
+    const catObj = catSelect ? (this.data.categories || []).find(c => c.id === catSelect.value) : null;
+    const isEm = this.isEmeraldCategory(catObj);
+    const wUnit = isEm ? 'ct' : 'g';
 
     const quantity = this.parseCleanNumber(document.getElementById('po-quantity')?.value);
     const unitCost = this.parseCleanNumber(document.getElementById('po-unit-cost')?.value);
@@ -3868,10 +4053,10 @@ class NexusApp {
     }
     if (gramsPreview) {
       if (isPesaje) {
-        gramsPreview.textContent = `${this.formatNumberWithCommas(totalGrams, true)} g`;
+        gramsPreview.textContent = `${this.formatNumberWithCommas(totalGrams, true)} ${wUnit}`;
       } else {
         gramsPreview.textContent = pieceGrams > 0 
-          ? `${this.formatNumberWithCommas(totalGrams, true)} g (${this.formatNumberWithCommas(quantity)} u.)`
+          ? `${this.formatNumberWithCommas(totalGrams, true)} ${wUnit} (${this.formatNumberWithCommas(quantity)} u.)`
           : `${this.formatNumberWithCommas(quantity)} u.`;
       }
     }
@@ -4275,6 +4460,9 @@ class NexusApp {
     const weightGroup = document.getElementById(`${prefix}-prod-weight-unit-group`);
     const pieceWeightGroup = document.getElementById(`${prefix}-prod-piece-weight-group`);
     const pieceWeightInput = document.getElementById(`${prefix}-prod-piece-weight`);
+    const pieceWeightTitle = document.getElementById(`${prefix}-prod-piece-weight-title`);
+    const pieceWeightSub = document.getElementById(`${prefix}-prod-piece-weight-sub`);
+    const pieceWeightUnit = document.getElementById(`${prefix}-prod-piece-weight-unit`);
     const weightSelect = document.getElementById(`${prefix}-prod-weight-unit`);
     const nameGroup = document.getElementById(`${prefix}-prod-name-group`);
     const costLabel = document.getElementById(`${prefix}-prod-cost-label`);
@@ -4287,6 +4475,7 @@ class NexusApp {
     const catSelect = document.getElementById(`${prefix}-prod-cat`);
     const currentCat = catSelect ? (this.data?.categories || []).find(c => c.id === catSelect.value || c.name === catSelect.value) : null;
     const isExtrasCat = currentCat && (currentCat.type === 'extras' || currentCat.isExtra);
+    const isEmeraldCat = this.isEmeraldCategory(currentCat);
 
     const type = measureSelect?.value || 'Pesaje';
 
@@ -4295,7 +4484,12 @@ class NexusApp {
       if (pieceWeightGroup) pieceWeightGroup.style.display = 'none';
       if (nameGroup) nameGroup.style.gridColumn = 'auto';
       if (stockGrid) stockGrid.style.gridTemplateColumns = '1fr';
-      if (weightSelect) weightSelect.disabled = false;
+      if (weightSelect) {
+        weightSelect.disabled = false;
+        if (isEmeraldCat && weightSelect.value !== 'ct') {
+          weightSelect.value = 'ct';
+        }
+      }
       if (pieceWeightInput) pieceWeightInput.required = false;
       this.onWeightUnitChange(prefix);
     } else {
@@ -4308,10 +4502,30 @@ class NexusApp {
         pieceWeightInput.required = !isExtrasCat;
         if (isExtrasCat) pieceWeightInput.value = '0';
       }
-      if (costLabel) costLabel.textContent = isExtrasCat ? 'Costo de compra unitario ($ COP) *' : 'Costo de la mercancía (Costo unitario) *';
+      if (pieceWeightTitle) {
+        pieceWeightTitle.textContent = isEmeraldCat ? 'Peso de la esmeralda (ct - Kilates) *' : 'Peso de la joya (g) *';
+      }
+      if (pieceWeightSub) {
+        pieceWeightSub.textContent = isEmeraldCat ? '🟢 Kilates por pieza' : '⚖️ Gramos por pieza';
+        pieceWeightSub.style.color = isEmeraldCat ? '#059669' : '#d97706';
+        pieceWeightSub.style.background = isEmeraldCat ? 'rgba(16,185,129,0.12)' : 'rgba(245,158,11,0.12)';
+      }
+      if (pieceWeightUnit) {
+        pieceWeightUnit.textContent = isEmeraldCat ? 'ct' : 'g';
+        pieceWeightUnit.style.color = isEmeraldCat ? '#059669' : '#d97706';
+      }
+      if (costLabel) {
+        costLabel.textContent = isExtrasCat
+          ? 'Costo de compra unitario ($ COP) *'
+          : (isEmeraldCat ? 'Costo por Kilate ($ COP / ct) *' : 'Costo de la mercancía (Costo unitario / por g) *');
+      }
       if (priceLabel) priceLabel.textContent = 'Precio de venta (A cómo se va a vender por unidad) *';
-      if (stockLabel) stockLabel.textContent = isExtrasCat ? 'Unidades de manillas (Stock) *' : 'Cantidad de unidades (Stock) *';
-      if (stockInput) stockInput.placeholder = '10';
+      if (stockLabel) {
+        stockLabel.textContent = isExtrasCat
+          ? 'Unidades de manillas (Stock) *'
+          : (isEmeraldCat ? 'Cantidad de esmeraldas / piezas (Stock) *' : 'Cantidad de unidades (Stock) *');
+      }
+      if (stockInput) stockInput.placeholder = isEmeraldCat ? '1' : '10';
       if (unitTag) unitTag.textContent = 'u.';
       this.updateProductCostProfitPreview(prefix);
     }
@@ -4330,6 +4544,7 @@ class NexusApp {
 
     const unitConfigs = {
       'g': { name: 'gramo', totalLabel: 'Cantidad en gramos (Stock total disponible) *', placeholder: '2.08' },
+      'ct': { name: 'kilate (ct)', totalLabel: 'Cantidad en kilates (Stock total disponible - ct) *', placeholder: '2.30' },
       'mg': { name: 'miligramo', totalLabel: 'Cantidad en miligramos (Stock total disponible) *', placeholder: '250' },
       'µg': { name: 'microgramo', totalLabel: 'Cantidad en microgramos (Stock total disponible) *', placeholder: '1000' },
       'kg': { name: 'kilogramo', totalLabel: 'Cantidad en kilogramos (Stock total disponible) *', placeholder: '1.5' },
@@ -4349,6 +4564,11 @@ class NexusApp {
     const stockInput = document.getElementById(`${prefix}-prod-stock`);
     const pieceWeightInput = document.getElementById(`${prefix}-prod-piece-weight`);
     const measureSelect = document.getElementById(`${prefix}-prod-measure-type`);
+    const weightSelect = document.getElementById(`${prefix}-prod-weight-unit`);
+    const catSelect = document.getElementById(`${prefix}-prod-cat`);
+    const currentCat = catSelect ? (this.data?.categories || []).find(c => c.id === catSelect.value || c.name === catSelect.value) : null;
+    const isEmeraldCat = this.isEmeraldCategory(currentCat) || (weightSelect?.value === 'ct');
+    const wUnit = isEmeraldCat ? 'ct' : 'g';
 
     const cost = this.parseCleanNumber(costInput?.value);
     const stock = this.parseCleanNumber(stockInput?.value);
@@ -4367,7 +4587,7 @@ class NexusApp {
       totalCost = pieceWeight > 0 ? Math.round(totalWeight * cost) : Math.round(stock * cost);
       if (weightBox && weightEl) {
         weightBox.style.display = 'block';
-        weightEl.textContent = `${totalWeight.toLocaleString('es-CO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} g`;
+        weightEl.textContent = `${totalWeight.toLocaleString('es-CO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${wUnit}`;
         if (badgeBox) badgeBox.style.display = 'none';
       }
     } else {
@@ -4407,6 +4627,7 @@ class NexusApp {
     const costInput = document.getElementById(`${prefix}-prod-cost`);
     const hintEl = document.getElementById(`${prefix}-prod-cat-cost-hint`);
     const measureSelect = document.getElementById(`${prefix}-prod-measure-type`);
+    const weightSelect = document.getElementById(`${prefix}-prod-weight-unit`);
     const pieceWeightGroup = document.getElementById(`${prefix}-prod-piece-weight-group`);
     const pieceWeightInput = document.getElementById(`${prefix}-prod-piece-weight`);
     const stockGrid = document.getElementById(`${prefix}-prod-stock-grid`);
@@ -4417,6 +4638,8 @@ class NexusApp {
     if (!cat) return;
 
     const isExtras = cat.type === 'extras' || cat.isExtra;
+    const isEmerald = this.isEmeraldCategory(cat);
+
     if (isExtras) {
       if (measureSelect) {
         measureSelect.value = 'Unidades';
@@ -4437,6 +4660,26 @@ class NexusApp {
       }
       return;
     }
+
+    if (isEmerald) {
+      if (weightSelect) {
+        weightSelect.value = 'ct';
+      }
+      this.onMeasureTypeChange(prefix);
+      if (cat.cost && costInput && (!costInput.value || this.parseCleanNumber(costInput.value) === 0)) {
+        costInput.value = this.formatNumberWithCommas(cat.cost);
+        this.updateProductCostProfitPreview(prefix);
+      }
+      if (hintEl) {
+        hintEl.innerHTML = `<span style="color:#059669; font-weight:700; font-size:0.8rem;">🟢 Categoría de Esmeraldas: Se mide en Kilates (ct). Su peso e inventario son independientes y no afectan el gramaje de metales preciosos.</span>`;
+      }
+      return;
+    }
+
+    if (weightSelect && weightSelect.value === 'ct') {
+      weightSelect.value = 'g';
+    }
+    this.onMeasureTypeChange(prefix);
 
     if (cat.cost) {
       if (costInput && (!costInput.value || this.parseCleanNumber(costInput.value) === 0)) {
@@ -4532,34 +4775,84 @@ class NexusApp {
     const typeSelect = document.getElementById('cat-type-select');
     const generalFields = document.getElementById('cat-general-fields');
     const extrasFields = document.getElementById('cat-extras-fields');
+    const esmeraldasFields = document.getElementById('cat-esmeraldas-fields');
     const nameLabel = document.getElementById('cat-name-label');
     const nameInput = document.getElementById('cat-name-input');
+    const colorInput = document.getElementById('cat-color-input');
+    const colorCode = document.getElementById('cat-color-code');
     const gramsInput = document.getElementById('cat-grams-input');
     const costInput = document.getElementById('cat-cost-input');
     const unitsInput = document.getElementById('cat-units-input');
     const unitCostInput = document.getElementById('cat-unit-cost-input');
+    const caratsInput = document.getElementById('cat-carats-input');
+    const caratCostInput = document.getElementById('cat-carat-cost-input');
 
     const type = typeSelect ? typeSelect.value : 'general';
 
     if (type === 'extras') {
       if (generalFields) generalFields.style.display = 'none';
       if (extrasFields) extrasFields.style.display = 'block';
+      if (esmeraldasFields) esmeraldasFields.style.display = 'none';
       if (nameLabel) nameLabel.textContent = 'Nombre de la Categoría de Manillas / Accesorios *';
       if (nameInput) nameInput.placeholder = 'ej. Manillas Neopreno, Tejidas, Balines...';
       if (gramsInput) gramsInput.required = false;
       if (costInput) costInput.required = false;
       if (unitsInput) unitsInput.required = true;
       if (unitCostInput) unitCostInput.required = true;
+      if (caratsInput) caratsInput.required = false;
+      if (caratCostInput) caratCostInput.required = false;
+    } else if (type === 'esmeraldas') {
+      if (generalFields) generalFields.style.display = 'none';
+      if (extrasFields) extrasFields.style.display = 'none';
+      if (esmeraldasFields) esmeraldasFields.style.display = 'block';
+      if (nameLabel) nameLabel.textContent = 'Nombre de la Categoría de Esmeraldas / Gemas *';
+      if (nameInput) nameInput.placeholder = 'ej. Esmeraldas Colombianas, Gemas Preciosas...';
+      if (colorInput && (!colorInput.value || colorInput.value.toUpperCase() === '#F59E0B')) {
+        colorInput.value = '#10B981';
+        if (colorCode) colorCode.textContent = '#10B981';
+      }
+      if (gramsInput) gramsInput.required = false;
+      if (costInput) costInput.required = false;
+      if (unitsInput) unitsInput.required = false;
+      if (unitCostInput) unitCostInput.required = false;
+      if (caratsInput) caratsInput.required = false;
+      if (caratCostInput) caratCostInput.required = false;
     } else {
       if (generalFields) generalFields.style.display = 'block';
       if (extrasFields) extrasFields.style.display = 'none';
+      if (esmeraldasFields) esmeraldasFields.style.display = 'none';
       if (nameLabel) nameLabel.textContent = 'Nombre de Categoría *';
       if (nameInput) nameInput.placeholder = 'ej. Oro 18K Italiano & Ley';
       if (gramsInput) gramsInput.required = false;
       if (costInput) costInput.required = false;
       if (unitsInput) unitsInput.required = false;
       if (unitCostInput) unitCostInput.required = false;
+      if (caratsInput) caratsInput.required = false;
+      if (caratCostInput) caratCostInput.required = false;
     }
+  }
+
+  onEditCategoryTypeChange() {
+    const typeSelect = document.getElementById('edit-cat-type-select');
+    const generalFields = document.getElementById('edit-cat-general-fields');
+    const extrasFields = document.getElementById('edit-cat-extras-fields');
+    const esmeraldasFields = document.getElementById('edit-cat-esmeraldas-fields');
+    const type = typeSelect ? typeSelect.value : 'general';
+
+    if (type === 'extras') {
+      if (generalFields) generalFields.style.display = 'none';
+      if (extrasFields) extrasFields.style.display = 'block';
+      if (esmeraldasFields) esmeraldasFields.style.display = 'none';
+    } else if (type === 'esmeraldas') {
+      if (generalFields) generalFields.style.display = 'none';
+      if (extrasFields) extrasFields.style.display = 'none';
+      if (esmeraldasFields) esmeraldasFields.style.display = 'block';
+    } else {
+      if (generalFields) generalFields.style.display = 'block';
+      if (extrasFields) extrasFields.style.display = 'none';
+      if (esmeraldasFields) esmeraldasFields.style.display = 'none';
+    }
+    this.updateEditCategoryValuationPreview();
   }
 
   openEditCategoryModal(id) {
@@ -4578,13 +4871,17 @@ class NexusApp {
     const prodsCountEl = document.getElementById('edit-cat-products-count');
     const gramsBadgeEl = document.getElementById('edit-cat-grams-badge');
     const valuationBadgeEl = document.getElementById('edit-cat-valuation-badge');
+    const typeSelect = document.getElementById('edit-cat-type-select');
 
     const generalFields = document.getElementById('edit-cat-general-fields');
     const extrasFields = document.getElementById('edit-cat-extras-fields');
+    const esmeraldasFields = document.getElementById('edit-cat-esmeraldas-fields');
     const gramsInput = document.getElementById('edit-cat-grams-input');
     const costInput = document.getElementById('edit-cat-cost-input');
     const unitsInput = document.getElementById('edit-cat-units-input');
     const unitCostInput = document.getElementById('edit-cat-unit-cost-input');
+    const caratsInput = document.getElementById('edit-cat-carats-input');
+    const caratCostInput = document.getElementById('edit-cat-carat-cost-input');
 
     if (idInput) idInput.value = cat.id;
     if (idDisplay) idDisplay.value = cat.id;
@@ -4593,19 +4890,31 @@ class NexusApp {
     if (colorCode) colorCode.textContent = cat.color || '#F59E0B';
 
     const isExtras = cat.type === 'extras' || cat.isExtra;
+    const isEmerald = this.isEmeraldCategory(cat);
+
+    if (typeSelect) {
+      typeSelect.value = isExtras ? 'extras' : (isEmerald ? 'esmeraldas' : 'general');
+    }
 
     if (isExtras) {
       if (generalFields) generalFields.style.display = 'none';
       if (extrasFields) extrasFields.style.display = 'block';
+      if (esmeraldasFields) esmeraldasFields.style.display = 'none';
+    } else if (isEmerald) {
+      if (generalFields) generalFields.style.display = 'none';
+      if (extrasFields) extrasFields.style.display = 'none';
+      if (esmeraldasFields) esmeraldasFields.style.display = 'block';
     } else {
       if (generalFields) generalFields.style.display = 'block';
       if (extrasFields) extrasFields.style.display = 'none';
+      if (esmeraldasFields) esmeraldasFields.style.display = 'none';
     }
 
     const prodsInCat = (this.data.products || []).filter(p => p.category === cat.id || p.categoryName === cat.name);
     const totalUnitsInProds = prodsInCat.reduce((sum, p) => sum + (parseFloat(String(p.stock || 0).replace(',', '.')) || 0), 0);
     const totalCostInProds = prodsInCat.reduce((sum, p) => sum + (this.getProductTotalCost(p) || 0), 0);
     const totalGramsInProds = prodsInCat.reduce((sum, p) => sum + (this.getGramsFromProduct(p) || 0), 0);
+    const totalCaratsInProds = prodsInCat.reduce((sum, p) => sum + (this.getCaratsFromProduct(p) || 0), 0);
 
     if (isExtras) {
       cat.availableGrams = 0;
@@ -4621,6 +4930,8 @@ class NexusApp {
       if (unitCostInput) unitCostInput.value = this.formatNumberWithCommas(calculatedUnitCost);
       if (gramsInput) gramsInput.value = '0.00';
       if (costInput) costInput.value = this.formatNumberWithCommas(calculatedUnitCost);
+      if (caratsInput) caratsInput.value = '0.00';
+      if (caratCostInput) caratCostInput.value = this.formatNumberWithCommas(calculatedUnitCost);
 
       if (prodsCountEl) {
         if (prodsInCat.length > 0) {
@@ -4636,6 +4947,32 @@ class NexusApp {
         const totalVal = Math.round(currentUnits * calculatedUnitCost);
         valuationBadgeEl.textContent = `💰 Valor: ${this.formatCurrency(totalVal)}`;
       }
+    } else if (isEmerald) {
+      cat.availableGrams = 0;
+      const availableCarats = prodsInCat.length > 0
+        ? Math.round(totalCaratsInProds * 100) / 100
+        : (Number(cat.availableCarats) || 0);
+      cat.availableCarats = availableCarats;
+
+      let calculatedCaratCost = Number(cat.cost) || 0;
+      if (availableCarats > 0 && totalCostInProds > 0) {
+        calculatedCaratCost = Math.round((totalCostInProds / availableCarats) * 100) / 100;
+      }
+      cat.cost = calculatedCaratCost;
+
+      if (caratsInput) caratsInput.value = this.formatNumberWithCommas(availableCarats, true);
+      if (caratCostInput) caratCostInput.value = this.formatNumberWithCommas(calculatedCaratCost, true);
+      if (gramsInput) gramsInput.value = '0.00';
+      if (costInput) costInput.value = this.formatNumberWithCommas(calculatedCaratCost, true);
+
+      if (prodsCountEl) {
+        if (prodsInCat.length > 0) {
+          prodsCountEl.textContent = `${prodsInCat.length} esmeraldas (${availableCarats.toFixed(2)} ct en piezas) — Costo Promedio: ${this.formatCurrencyDecimals(calculatedCaratCost)}/ct`;
+        } else {
+          prodsCountEl.textContent = `0 esmeraldas asociadas (${availableCarats.toFixed(2)} ct disponibles)`;
+        }
+      }
+      this.updateEditCategoryValuationPreview();
     } else {
       const isUnidades = cat.id === 'relojes' || cat.id === 'accesorios';
       const availableGrams = (cat.availableGrams !== undefined && cat.availableGrams !== null)
@@ -4653,6 +4990,8 @@ class NexusApp {
 
       if (gramsInput) gramsInput.value = this.formatNumberWithCommas(availableGrams, true);
       if (costInput) costInput.value = this.formatNumberWithCommas(calculatedAvgCost, true);
+      if (caratsInput) caratsInput.value = this.formatNumberWithCommas(availableGrams, true);
+      if (caratCostInput) caratCostInput.value = this.formatNumberWithCommas(calculatedAvgCost, true);
 
       if (prodsCountEl) {
         if (prodsInCat.length > 0) {
@@ -4670,7 +5009,10 @@ class NexusApp {
   updateEditCategoryValuationPreview() {
     const id = document.getElementById('edit-cat-id')?.value;
     const cat = (this.data?.categories || []).find(c => c.id === id);
-    const isExtras = cat ? (cat.type === 'extras' || cat.isExtra) : false;
+    const typeSelect = document.getElementById('edit-cat-type-select');
+    const selectedType = typeSelect ? typeSelect.value : (cat?.type === 'extras' || cat?.isExtra ? 'extras' : (this.isEmeraldCategory(cat) ? 'esmeraldas' : 'general'));
+    const isExtras = selectedType === 'extras';
+    const isEmerald = selectedType === 'esmeraldas';
 
     const badge = document.getElementById('edit-cat-valuation-badge');
     const gramsBadgeEl = document.getElementById('edit-cat-grams-badge');
@@ -4687,6 +5029,18 @@ class NexusApp {
         const totalValuation = Math.round(units * unitCost);
         badge.textContent = `💰 Valor: ${this.formatCurrency(totalValuation)}`;
       }
+    } else if (isEmerald) {
+      const caratsInput = document.getElementById('edit-cat-carats-input');
+      const caratCostInput = document.getElementById('edit-cat-carat-cost-input');
+      const carats = this.parseCleanNumber(caratsInput?.value) || 0;
+      const caratCost = this.parseCleanNumber(caratCostInput?.value) || 0;
+      if (gramsBadgeEl) {
+        gramsBadgeEl.textContent = `🟢 ${carats.toLocaleString('es-CO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ct`;
+      }
+      if (badge) {
+        const totalValuation = Math.round(carats * caratCost);
+        badge.textContent = `💰 Valor: ${this.formatCurrency(totalValuation)}`;
+      }
     } else {
       const gramsInput = document.getElementById('edit-cat-grams-input');
       const costInput = document.getElementById('edit-cat-cost-input');
@@ -4700,6 +5054,24 @@ class NexusApp {
         badge.textContent = `💰 Valor: ${this.formatCurrency(totalValuation)}`;
       }
     }
+  }
+
+  adjustCategoryCaratsInput(delta) {
+    const input = document.getElementById('edit-cat-carats-input');
+    if (!input) return;
+    const current = this.parseCleanNumber(input.value);
+    const updated = Math.max(0, Math.round((current + delta) * 100) / 100);
+    input.value = this.formatNumberWithCommas(updated, true);
+    this.updateEditCategoryValuationPreview();
+  }
+
+  adjustCategoryCaratCostInput(delta) {
+    const input = document.getElementById('edit-cat-carat-cost-input');
+    if (!input) return;
+    const current = this.parseCleanNumber(input.value);
+    const updated = Math.max(0, Math.round(current + delta));
+    input.value = this.formatNumberWithCommas(updated);
+    this.updateEditCategoryValuationPreview();
   }
 
   adjustCategoryCostInput(delta) {
@@ -6341,8 +6713,12 @@ class NexusApp {
   }
 
   renderDashboardMetrics() {
-    const totalCostValue = (this.data.products || []).reduce((acc, p) => acc + this.getProductTotalCost(p), 0);
+    const totalCostValue = (this.data.products || []).reduce((acc, p) => {
+      if (this.isIsolatedInventoryProduct(p)) return acc;
+      return acc + this.getProductTotalCost(p);
+    }, 0);
     const totalInvValue = (this.data.products || []).reduce((acc, p) => {
+      if (this.isIsolatedInventoryProduct(p)) return acc;
       const price = Number(p.price) || 0;
       if (price <= 0) return acc;
       const grams = this.getGramsFromProduct(p);
@@ -6352,12 +6728,10 @@ class NexusApp {
 
     const pesajeProducts = (this.data.products || []).filter(p => {
       if (!p) return false;
-      if (p.isExtra) return false;
-      const cat = (this.data.categories || []).find(c => c.id === p.category || c.name === p.categoryName);
-      if (cat && (cat.type === 'extras' || cat.isExtra)) return false;
+      if (this.isIsolatedInventoryProduct(p)) return false;
       return (p.measureType || 'Pesaje') === 'Pesaje' || (this.getGramsFromProduct(p) > 0);
     });
-    // Live inventory calculation: always derived directly from current products stock
+    // Live inventory calculation: always derived directly from current products stock (excluding isolated categories: manillas & esmeraldas)
     const totalGrams = Math.round((this.data.products || []).reduce((acc, p) => acc + (this.getGramsFromProduct(p) || 0), 0) * 100) / 100;
 
     const pesajeCost = pesajeProducts.reduce((acc, p) => acc + this.getProductTotalCost(p), 0);
@@ -6405,8 +6779,11 @@ class NexusApp {
     }
     if (kpiTxEl) kpiTxEl.innerText = effectiveTxToday;
 
-    // Dynamic valuation based strictly on live products
-    const liveInvVal = (this.data.products || []).reduce((sum, p) => sum + (this.getProductTotalCost(p) || 0), 0);
+    // Dynamic valuation based strictly on live general products (excluding isolated categories: manillas & esmeraldas)
+    const liveInvVal = (this.data.products || []).reduce((sum, p) => {
+      if (this.isIsolatedInventoryProduct(p)) return sum;
+      return sum + (this.getProductTotalCost(p) || 0);
+    }, 0);
     this.data.kpis.inventoryValue = liveInvVal;
     this.data.kpis.totalGrams = totalGrams;
     this.data.kpis.avgCostPerGram = liveAvgCostPerGram;
@@ -10060,16 +10437,24 @@ class NexusApp {
       cat.itemsCount = count;
 
       const prodsGrams = prodsInCat.reduce((sum, p) => sum + (this.getGramsFromProduct(p) || 0), 0);
+      const prodsCarats = prodsInCat.reduce((sum, p) => sum + (this.getCaratsFromProduct(p) || 0), 0);
       const totalUnits = prodsInCat
         .filter(p => p.measureType === 'Unidades')
         .reduce((sum, p) => sum + (parseFloat(String(p.stock || 0).replace(',', '.')) || 0), 0);
 
-      cat.availableGrams = Math.round(prodsGrams * 100) / 100;
-      const formattedGrams = cat.availableGrams;
-
       const isExtras = cat.type === 'extras' || cat.isExtra;
+      const isEmerald = this.isEmeraldCategory(cat);
       const isUnidades = isExtras || cat.id === 'relojes' || cat.id === 'accesorios';
-      const costUnit = isUnidades ? 'u.' : 'g';
+      const costUnit = isEmerald ? 'ct' : (isUnidades ? 'u.' : 'g');
+
+      cat.availableGrams = (isExtras || isEmerald) ? 0 : (Math.round(prodsGrams * 100) / 100);
+      const formattedGrams = cat.availableGrams;
+      const formattedCarats = isEmerald
+        ? (count > 0 ? (Math.round(prodsCarats * 100) / 100) : (Number(cat.availableCarats) || 0))
+        : 0;
+      if (isEmerald) {
+        cat.availableCarats = formattedCarats;
+      }
 
       let stockDisplay = '';
       if (isExtras) {
@@ -10080,6 +10465,16 @@ class NexusApp {
             <span class="badge" style="background:rgba(99,102,241,0.1); color:#4F46E5; font-size:0.68rem; font-weight:700; padding:2px 5px; border-radius:4px;">Servicio Extra</span>
           </div>
         `;
+      } else if (isEmerald) {
+        stockDisplay = `
+          <div style="display:flex; align-items:center; flex-wrap:wrap; gap:4px;">
+            <span class="badge" title="${canEditCategory ? 'Clic para editar categoría de esmeraldas' : 'Disponibilidad en Kilates (ct)'}" style="background:#ECFDF5; color:#047857; font-weight:800; font-size:0.85rem; padding:4px 9px; border-radius:6px; border:1px solid rgba(16,185,129,0.35); ${canEditCategory ? 'cursor:pointer;' : ''}" ${canEditCategory ? `onclick="app.openEditCategoryModal('${this.escapeHtml(cat.id)}')"` : ''}>🟢 ${formattedCarats.toLocaleString('es-CO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ct</span>
+            <span class="badge" style="background:rgba(16,185,129,0.12); color:#059669; font-size:0.68rem; font-weight:700; padding:2px 5px; border-radius:4px;">Esmeraldas (Kilates)</span>
+          </div>
+        `;
+        if (totalUnits > 0) {
+          stockDisplay += `<div style="margin-top:2px;"><span class="badge" style="background:#D1FAE5; color:#065F46; font-weight:700; font-size:0.72rem; padding:1px 5px; border-radius:4px;">📦 ${totalUnits} u.</span></div>`;
+        }
       } else {
         stockDisplay = `
           <div style="display:flex; align-items:center; flex-wrap:wrap; gap:4px;">
@@ -10094,7 +10489,7 @@ class NexusApp {
       const prodsTotalCost = prodsInCat.reduce((sum, p) => sum + (this.getProductTotalCost(p) || 0), 0);
 
       // Costo promedio ponderado solicitado por el cliente:
-      // sumatoria de los costos totales de los productos ingresados dividida en los gramos totales de la categoría
+      // sumatoria de los costos totales de los productos ingresados dividida en los gramos/kilates totales de la categoría
       let avgCost = 0;
       let totalValuation = 0;
       if (isExtras) {
@@ -10104,6 +10499,13 @@ class NexusApp {
         cat.cost = avgCost;
         cat.availableGrams = 0;
         totalValuation = Math.round((prodsTotalCost > 0 ? prodsTotalCost : (units * avgCost)) * 100) / 100;
+        cat.totalValuation = totalValuation;
+      } else if (isEmerald) {
+        avgCost = (count > 0 && formattedCarats > 0) ? (prodsTotalCost / formattedCarats) : (Number(cat.cost) || 0);
+        avgCost = Math.round(avgCost * 100) / 100;
+        cat.cost = avgCost;
+        cat.availableGrams = 0;
+        totalValuation = Math.round((prodsTotalCost > 0 ? prodsTotalCost : (formattedCarats * avgCost)) * 100) / 100;
         cat.totalValuation = totalValuation;
       } else if (isUnidades) {
         avgCost = totalUnits > 0 ? (prodsTotalCost / totalUnits) : (Number(cat.cost) || 0);
@@ -10126,10 +10528,12 @@ class NexusApp {
         </div>
       ` : '';
 
-      const isCalculated = count > 0 && (formattedGrams > 0 || (isUnidades && totalUnits > 0));
+      const isCalculated = count > 0 && (formattedGrams > 0 || (isEmerald && formattedCarats > 0) || (isUnidades && totalUnits > 0));
       const costBadgeTitle = isExtras
         ? (isCalculated ? `Costo Promedio Unitario: Sumatoria de costos (${this.formatCurrencyDecimals(totalValuation)}) ÷ Unidades totales (${totalUnits} u.)` : 'Costo unitario de compra')
-        : (isCalculated ? `Costo Promedio Ponderado: Sumatoria de costos (${this.formatCurrencyDecimals(totalValuation)}) ÷ Gramos totales (${formattedGrams} g)` : 'Costo base de referencia (sin inventario registrado)');
+        : (isEmerald
+            ? (isCalculated ? `Costo Promedio por Kilate: Sumatoria de costos (${this.formatCurrencyDecimals(totalValuation)}) ÷ Kilates totales (${formattedCarats} ct)` : 'Costo base por kilate')
+            : (isCalculated ? `Costo Promedio Ponderado: Sumatoria de costos (${this.formatCurrencyDecimals(totalValuation)}) ÷ Gramos totales (${formattedGrams} g)` : 'Costo base de referencia (sin inventario registrado)'));
 
       const costDisplay = `
         <div style="display:flex; flex-direction:column; gap:2px;">
@@ -10137,7 +10541,7 @@ class NexusApp {
             <span class="badge" title="${costBadgeTitle}" style="background:#ECFDF5; color:#065F46; font-weight:800; font-size:0.85rem; padding:4px 9px; border-radius:6px; border:1px solid rgba(16,185,129,0.3); ${canEditCategory ? 'cursor:pointer;' : ''}" ${canEditCategory ? `onclick="app.openEditCategoryModal('${this.escapeHtml(cat.id)}')"` : ''}>💰 ${this.formatCurrencyDecimals(avgCost)} / ${costUnit}</span>
             ${quickCostStepper}
           </div>
-          ${isCalculated ? `<span style="font-size:0.7rem; color:var(--text-subtle); font-weight:600;">${isExtras ? '🧵 Por unidad' : '⚖️ Promedio'} (${count} piezas)</span>` : `<span style="font-size:0.7rem; color:var(--text-subtle);">${isExtras ? 'Costo unitario' : 'Costo base'}</span>`}
+          ${isCalculated ? `<span style="font-size:0.7rem; color:var(--text-subtle); font-weight:600;">${isExtras ? '🧵 Por unidad' : (isEmerald ? '🟢 Por kilate' : '⚖️ Promedio')} (${count} piezas)</span>` : `<span style="font-size:0.7rem; color:var(--text-subtle);">${isExtras ? 'Costo unitario' : (isEmerald ? 'Costo por kilate' : 'Costo base')}</span>`}
         </div>
       `;
 
@@ -10549,11 +10953,13 @@ class NexusApp {
 
     tbody.innerHTML = filtered.map(p => {
       const isPesaje = (p.measureType || 'Pesaje') === 'Pesaje';
-      const unit = isPesaje ? (p.weightUnit || 'g') : 'u.';
+      const isEm = this.isEmeraldProduct(p);
+      const wUnit = isEm ? 'ct' : (p.weightUnit || 'g');
+      const unit = isPesaje ? wUnit : 'u.';
       const pWeight = parseFloat(String(p.pieceWeight !== undefined && p.pieceWeight !== null ? p.pieceWeight : (p.weight || 0)).replace(',', '.')) || 0;
       const measureBadge = isPesaje 
-        ? `<span class="badge" style="background:#FEF3C7; color:#D97706; font-weight:700;">⚖️ Pesaje (${unit})</span>`
-        : `<span class="badge" style="background:#E0E7FF; color:#4F46E5; font-weight:700;">📦 Unidades${pWeight > 0 ? ` (${pWeight} g)` : ''}</span>`;
+        ? `<span class="badge" style="background:${isEm ? '#ECFDF5' : '#FEF3C7'}; color:${isEm ? '#047857' : '#D97706'}; font-weight:700;">${isEm ? '🟢' : '⚖️'} Pesaje (${unit})</span>`
+        : `<span class="badge" style="background:${isEm ? '#ECFDF5' : '#E0E7FF'}; color:${isEm ? '#047857' : '#4F46E5'}; font-weight:700;">${isEm ? '🟢' : '📦'} Unidades${pWeight > 0 ? ` (${pWeight} ${wUnit})` : ''}</span>`;
       
       const stockNum = parseNum(p.stock);
       const isAgotado = stockNum <= 0 || p.status === 'out_of_stock';
@@ -10594,7 +11000,7 @@ class NexusApp {
             ${!isPesaje && pWeight > 0 ? `
               <div>
                 <div style="font-weight:700; color:var(--text-main); font-size:0.88rem;">${this.formatCurrency(Math.round(pWeight * Number(p.cost || 0)))} / u.</div>
-                <div style="font-size:0.7rem; color:var(--text-muted);">${this.formatCurrency(p.cost)}/g × ${pWeight}g</div>
+                <div style="font-size:0.7rem; color:var(--text-muted);">${this.formatCurrency(p.cost)}/${wUnit} × ${pWeight}${wUnit}</div>
               </div>
             ` : `
               <span style="color:var(--text-muted); font-size:0.85rem;">${this.formatCurrency(p.cost)}${costUnitLabel}</span>
@@ -24739,7 +25145,9 @@ class NexusApp {
 
     grid.innerHTML = filtered.map(p => {
       const isPesaje = (p.measureType || 'Pesaje') === 'Pesaje';
-      const unit = isPesaje ? (p.weightUnit || 'g') : 'u.';
+      const isEm = this.isEmeraldProduct(p);
+      const wUnit = isEm ? 'ct' : (p.weightUnit || 'g');
+      const unit = isPesaje ? wUnit : 'u.';
       const unitLabel = isPesaje ? `/ ${unit}` : '';
       const stockUnit = unit;
       const skuBadge = p.sku || p.id || 'S/C';
@@ -24761,8 +25169,8 @@ class NexusApp {
             <span class="badge" style="background:var(--canvas-bg); color:var(--text-main); border:1px solid var(--border-color); font-size:0.7rem; font-weight:700; padding:2px 6px; border-radius:4px; letter-spacing:0.02em;">Código: ${this.escapeHtml(skuBadge)}</span>
             <div style="display:flex; gap:4px; align-items:center;">
               ${stockPill}
-              <span class="badge" style="background:${isPesaje ? '#FEF3C7' : '#E0E7FF'}; color:${isPesaje ? '#D97706' : '#4F46E5'}; font-size:0.65rem; font-weight:700; padding:2px 5px; border-radius:4px;">${isPesaje ? '⚖️' : '📦'}</span>
-              ${!isPesaje && (p.pieceWeight || p.weight) > 0 ? `<span class="badge" style="background:#FEF3C7; color:#B45309; font-size:0.65rem; font-weight:700; padding:2px 5px; border-radius:4px;" title="Peso por unidad: ${p.pieceWeight || p.weight} g">⚖️ ${p.pieceWeight || p.weight}g</span>` : ''}
+              <span class="badge" style="background:${isEm ? '#ECFDF5' : (isPesaje ? '#FEF3C7' : '#E0E7FF')}; color:${isEm ? '#047857' : (isPesaje ? '#D97706' : '#4F46E5')}; font-size:0.65rem; font-weight:700; padding:2px 5px; border-radius:4px;">${isEm ? '🟢' : (isPesaje ? '⚖️' : '📦')}</span>
+              ${!isPesaje && (p.pieceWeight || p.weight) > 0 ? `<span class="badge" style="background:${isEm ? '#ECFDF5' : '#FEF3C7'}; color:${isEm ? '#047857' : '#B45309'}; font-size:0.65rem; font-weight:700; padding:2px 5px; border-radius:4px;" title="Peso por unidad: ${p.pieceWeight || p.weight} ${wUnit}">${isEm ? '🟢' : '⚖️'} ${p.pieceWeight || p.weight}${wUnit}</span>` : ''}
             </div>
           </div>
           <div class="pos-product-title" title="${this.escapeHtml(p.name)}" style="font-size:0.92rem; font-weight:700; margin-bottom:0.25rem;">${this.escapeHtml(p.name)}</div>
@@ -24837,9 +25245,11 @@ class NexusApp {
     }
 
     const isPesaje = (p.measureType || 'Pesaje') === 'Pesaje';
+    const isEm = this.isEmeraldProduct(p);
+    const wUnit = isEm ? 'ct' : 'g';
     const pWeight = parseFloat(String(p.pieceWeight !== undefined && p.pieceWeight !== null ? p.pieceWeight : (p.weight || 0)).replace(',', '.')) || 0;
     const isUnitWithWeight = !isPesaje && pWeight > 0;
-    const unit = (isPesaje || isUnitWithWeight) ? 'g' : (p.weightUnit || 'u.');
+    const unit = (isPesaje || isUnitWithWeight) ? wUnit : (p.weightUnit || 'u.');
     const maxAvailableQty = isUnitWithWeight ? Math.round(stockNum * pWeight * 100) / 100 : stockNum;
 
     const elId = document.getElementById('pos-add-product-id');
@@ -24865,24 +25275,26 @@ class NexusApp {
     if (elName) elName.textContent = p.name;
     if (elSku) elSku.textContent = `Código: ${p.sku || p.id}`;
     if (elCat) elCat.textContent = cat?.name || p.categoryName || p.category || 'General';
-    if (elStock) elStock.textContent = isUnitWithWeight ? `Stock: ${stockNum} u. (${maxAvailableQty} g)` : `Stock: ${stockNum} ${unit}`;
+    if (elStock) elStock.textContent = isUnitWithWeight ? `Stock: ${stockNum} u. (${maxAvailableQty} ${wUnit})` : `Stock: ${stockNum} ${unit}`;
     if (elPill) {
       if (isPesaje) {
-        elPill.textContent = '⚖️ Pesaje';
-        elPill.style.background = '#FEF3C7';
-        elPill.style.color = '#D97706';
+        elPill.textContent = isEm ? '🟢 Pesaje (ct)' : '⚖️ Pesaje';
+        elPill.style.background = isEm ? '#ECFDF5' : '#FEF3C7';
+        elPill.style.color = isEm ? '#047857' : '#D97706';
       } else {
-        elPill.textContent = pWeight > 0 ? `📦 Unidad (${pWeight} g/u)` : '📦 Unidad';
-        elPill.style.background = '#E0E7FF';
-        elPill.style.color = '#4F46E5';
+        elPill.textContent = pWeight > 0 ? `${isEm ? '🟢' : '📦'} Unidad (${pWeight} ${wUnit}/u)` : '📦 Unidad';
+        elPill.style.background = isEm ? '#ECFDF5' : '#E0E7FF';
+        elPill.style.color = isEm ? '#047857' : '#4F46E5';
       }
     }
 
     if (elQtyLabel) {
       if (isUnitWithWeight) {
-        elQtyLabel.textContent = `📦 Cantidad de Unidades a Vender (Peso: ${pWeight} g/u) *`;
+        elQtyLabel.textContent = isEm
+          ? `🟢 Kilates a Vender (Peso: ${pWeight} ct/u) *`
+          : `📦 Cantidad de Unidades a Vender (Peso: ${pWeight} g/u) *`;
       } else if (isPesaje) {
-        elQtyLabel.textContent = '⚖️ Cantidad / Gramos a Vender *';
+        elQtyLabel.textContent = isEm ? '🟢 Cantidad / Kilates (ct) a Vender *' : '⚖️ Cantidad / Gramos a Vender *';
       } else {
         elQtyLabel.textContent = '📦 Cantidad de Unidades a Vender *';
       }
@@ -24925,7 +25337,7 @@ class NexusApp {
         elCost.style.color = '#D97706';
         if (elCostSub) {
           if (isUnitWithWeight) {
-            elCostSub.textContent = `${this.formatCurrency(costPerGram)}/g × ${pWeight.toLocaleString('es-CO')} g (${cat?.name || 'Metal'})`;
+            elCostSub.textContent = `${this.formatCurrency(costPerGram)}/${wUnit} × ${pWeight.toLocaleString('es-CO')} ${wUnit} (${cat?.name || (isEm ? 'Esmeralda' : 'Metal')})`;
           } else {
             elCostSub.textContent = cat?.name ? `Costo base de ${cat.name}` : 'Costo de reposición';
           }
@@ -24958,7 +25370,7 @@ class NexusApp {
     if (elUnitBadge) elUnitBadge.textContent = unit;
     if (elMaxStockHint) {
       elMaxStockHint.textContent = isUnitWithWeight
-        ? `Máx: ${this.formatNumberWithCommas(maxAvailableQty, true)} g (${stockNum} u.)`
+        ? `Máx: ${this.formatNumberWithCommas(maxAvailableQty, true)} ${wUnit} (${stockNum} u.)`
         : `Máx: ${stockNum} ${unit}`;
     }
 
@@ -25033,9 +25445,11 @@ class NexusApp {
     const totalSale = Math.round(qtyVal * priceVal);
 
     const isPesaje = (p.measureType || 'Pesaje') === 'Pesaje';
+    const isEm = this.isEmeraldProduct(p);
+    const wUnit = isEm ? 'ct' : 'g';
     const pWeight = parseFloat(String(p.pieceWeight !== undefined && p.pieceWeight !== null ? p.pieceWeight : (p.weight || 0)).replace(',', '.')) || 0;
     const isUnitWithWeight = !isPesaje && pWeight > 0;
-    const unit = (isPesaje || isUnitWithWeight) ? 'g' : (p.weightUnit || 'u.');
+    const unit = (isPesaje || isUnitWithWeight) ? wUnit : (p.weightUnit || 'u.');
 
     const elTotalWeightVal = document.getElementById('pos-add-total-piece-weight-val');
     if (elTotalWeightVal && isUnitWithWeight) {
@@ -25234,10 +25648,12 @@ class NexusApp {
 
     const stockNum = parseFloat(String(p.stock || 0).replace(',', '.')) || 0;
     const isPesaje = (p.measureType || 'Pesaje') === 'Pesaje';
+    const isEm = this.isEmeraldProduct(p);
+    const wUnit = isEm ? 'ct' : 'g';
     const pWeight = parseFloat(String(p.pieceWeight !== undefined && p.pieceWeight !== null ? p.pieceWeight : (p.weight || 0)).replace(',', '.')) || 0;
     const isUnitWithWeight = !isPesaje && pWeight > 0;
     const maxStock = isUnitWithWeight ? Math.round(stockNum * pWeight * 100) / 100 : stockNum;
-    const unit = (isPesaje || isUnitWithWeight) ? 'g' : 'u.';
+    const unit = (isPesaje || isUnitWithWeight) ? wUnit : 'u.';
 
     if (qty <= 0) {
       this.showToast('Ingrese una cantidad válida mayor a 0', 'warning');
@@ -25279,9 +25695,11 @@ class NexusApp {
     }
 
     const isPesaje = (product.measureType || 'Pesaje') === 'Pesaje';
+    const isEm = this.isEmeraldProduct(product);
+    const wUnit = isEm ? 'ct' : 'g';
     const pWeight = parseFloat(String(product.pieceWeight !== undefined && product.pieceWeight !== null ? product.pieceWeight : (product.weight || 0)).replace(',', '.')) || 0;
     const isUnitWithWeight = !isPesaje && pWeight > 0;
-    const unit = (isPesaje || isUnitWithWeight) ? 'g' : (product.weightUnit || 'u.');
+    const unit = (isPesaje || isUnitWithWeight) ? wUnit : (product.weightUnit || 'u.');
     const maxStock = isUnitWithWeight ? Math.round(stockNum * pWeight * 100) / 100 : stockNum;
 
     const existing = this.cart.find(item => item.product.id === productId);
@@ -25409,9 +25827,11 @@ class NexusApp {
     let subtotal = 0;
     container.innerHTML = this.cart.map(item => {
       const isPesaje = (item.product.measureType || 'Pesaje') === 'Pesaje';
+      const isEm = this.isEmeraldProduct(item.product);
+      const wUnit = isEm ? 'ct' : 'g';
       const pWeight = parseFloat(String(item.product.pieceWeight !== undefined && item.product.pieceWeight !== null ? item.product.pieceWeight : (item.product.weight || 0)).replace(',', '.')) || 0;
       const isUnitWithWeight = !isPesaje && pWeight > 0;
-      const unit = (isPesaje || isUnitWithWeight) ? 'g' : (item.product.weightUnit || 'u.');
+      const unit = (isPesaje || isUnitWithWeight) ? wUnit : (item.product.weightUnit || 'u.');
       const effectivePrice = this.getCartItemPrice(item);
       const itemTotal = effectivePrice * item.qty;
       subtotal += itemTotal;
@@ -25430,8 +25850,8 @@ class NexusApp {
               <div class="cart-item-sku">
                 <span>Código: ${this.escapeHtml(item.product.sku || item.product.code || item.product.id)}</span>
                 ${isUnitWithWeight ? `
-                  <span class="badge" style="background:#FEF3C7; color:#B45309; font-size:0.68rem; font-weight:700; padding:1px 5px; margin-left:4px;" title="Peso: ${pWeight} g/u (${unitsCount} u. = ${(Math.round(item.qty * 100) / 100)} g)">
-                    ⚖️ ${pWeight} g/u. (${unitsCount} u.)
+                  <span class="badge" style="background:${isEm ? '#ECFDF5' : '#FEF3C7'}; color:${isEm ? '#047857' : '#B45309'}; font-size:0.68rem; font-weight:700; padding:1px 5px; margin-left:4px;" title="Peso: ${pWeight} ${wUnit}/u (${unitsCount} u. = ${(Math.round(item.qty * 100) / 100)} ${wUnit})">
+                    ${isEm ? '🟢' : '⚖️'} ${pWeight} ${wUnit}/u. (${unitsCount} u.)
                   </span>
                 ` : ''}
               </div>
